@@ -156,8 +156,13 @@ def _hf_download(cmd_args: list[str]) -> str:
     Uses a newer Hugging Face CLI version to download checkpoint. The dependency
     version is very old and not robust.
     """
+    uvx_args = ["uvx"]
+    proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+    if proxy and proxy.startswith(("socks://", "socks4://", "socks5://", "socks5h://")):
+        uvx_args.extend(["--with", "socksio"])
+
     cmd = [
-        "uvx",
+        *uvx_args,
         f"hf>={_MINIMUM_HF_CLI_VERSION}",
         "download",
         *cmd_args,

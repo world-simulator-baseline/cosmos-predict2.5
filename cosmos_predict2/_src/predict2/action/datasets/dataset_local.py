@@ -65,6 +65,7 @@ class Dataset_3D(Dataset):
         state_key="state",
         gripper_key="continuous_gripper_state",
         gripper_rescale_factor=1.0,
+        action_dim=None,
         is_rollout=None,
     ):
         """Dataset class for loading 3D robot action-conditional data.
@@ -134,8 +135,12 @@ class Dataset_3D(Dataset):
         self.accumulate_action = accumulate_action
         self.is_rollout = is_rollout
 
-        self.action_dim = 7  # ee xyz (3) + ee euler (3) + gripper(1)
-        self.c_act_scaler = [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, gripper_rescale_factor]
+        inferred_action_dim = self._infer_action_dim(self.data_path, state_key, gripper_key)
+        self.action_dim = action_dim or inferred_action_dim
+        if self.action_dim % 7 != 0:
+            raise ValueError(f"Expected action_dim to be a multiple of 7, got {self.action_dim}")
+        self.num_arms = self.action_dim // 7
+        self.c_act_scaler = [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, gripper_rescale_factor] * self.num_arms
         self.c_act_scaler = np.array(self.c_act_scaler, dtype=float)
         self.ann_files = self._init_anns(self.data_path)
         self._filter_rollout()
@@ -171,6 +176,22 @@ class Dataset_3D(Dataset):
     def _init_anns(self, data_dir):
         ann_files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".json")]
         return ann_files
+
+    def _infer_action_dim(self, data_dir, state_key, gripper_key):
+        ann_files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".json")]
+        if not ann_files:
+            return 7
+        with open(sorted(ann_files)[0], "r") as f:
+            ann = json.load(f)
+        state_dim = np.array(ann[state_key]).shape[-1]
+        gripper = np.array(ann[gripper_key])
+        gripper_dim = 1 if gripper.ndim == 1 else gripper.shape[-1]
+        if state_dim % 6 != 0:
+            raise ValueError(f"Expected state dim to be a multiple of 6, got {state_dim}")
+        num_arms = state_dim // 6
+        if gripper_dim != num_arms:
+            raise ValueError(f"Expected gripper dim {gripper_dim} to match num_arms {num_arms}")
+        return num_arms * 7
 
     def _init_sequences(self, ann_files):
         samples = []
@@ -276,45 +297,60 @@ class Dataset_3D(Dataset):
         all_cont_gripper_states = np.array(label[self._gripper_key])
         states = all_states[frame_ids]
         cont_gripper_states = all_cont_gripper_states[frame_ids]
-        arm_states = states[:, :6]
-        return arm_states, cont_gripper_states
+        if cont_gripper_states.ndim == 1:
+            cont_gripper_states = cont_gripper_states[:, None]
+        return states, cont_gripper_states
 
     def _get_actions(self, arm_states, gripper_states, accumulate_action):
         action = np.zeros((self.sequence_length - 1, self.action_dim))
+        if arm_states.shape[1] != self.num_arms * 6:
+            raise ValueError(f"Expected arm state dim {self.num_arms * 6}, got {arm_states.shape[1]}")
+        if gripper_states.shape[1] != self.num_arms:
+            raise ValueError(f"Expected gripper dim {self.num_arms}, got {gripper_states.shape[1]}")
         if accumulate_action:
-            base_xyz = arm_states[0, 0:3]
-            base_rpy = arm_states[0, 3:6]
-            base_rotm = euler2rotm(base_rpy)
+            base_xyz = []
+            base_rotm = []
+            for arm_i in range(self.num_arms):
+                state_offset = arm_i * 6
+                base_xyz.append(arm_states[0, state_offset : state_offset + 3])
+                base_rotm.append(euler2rotm(arm_states[0, state_offset + 3 : state_offset + 6]))
             for k in range(1, self.sequence_length):
-                curr_xyz = arm_states[k, 0:3]
-                curr_rpy = arm_states[k, 3:6]
-                curr_gripper = gripper_states[k]
-                curr_rotm = euler2rotm(curr_rpy)
-                rel_xyz = np.dot(base_rotm.T, curr_xyz - base_xyz)
-                rel_rotm = base_rotm.T @ curr_rotm
-                rel_rpy = rotm2euler(rel_rotm)
-                action[k - 1, 0:3] = rel_xyz
-                action[k - 1, 3:6] = rel_rpy
-                action[k - 1, 6] = curr_gripper
+                for arm_i in range(self.num_arms):
+                    state_offset = arm_i * 6
+                    action_offset = arm_i * 7
+                    curr_xyz = arm_states[k, state_offset : state_offset + 3]
+                    curr_rpy = arm_states[k, state_offset + 3 : state_offset + 6]
+                    curr_gripper = gripper_states[k, arm_i]
+                    curr_rotm = euler2rotm(curr_rpy)
+                    rel_xyz = np.dot(base_rotm[arm_i].T, curr_xyz - base_xyz[arm_i])
+                    rel_rotm = base_rotm[arm_i].T @ curr_rotm
+                    rel_rpy = rotm2euler(rel_rotm)
+                    action[k - 1, action_offset : action_offset + 3] = rel_xyz
+                    action[k - 1, action_offset + 3 : action_offset + 6] = rel_rpy
+                    action[k - 1, action_offset + 6] = curr_gripper
                 if k % 4 == 0:
-                    base_xyz = arm_states[k, 0:3]
-                    base_rpy = arm_states[k, 3:6]
-                    base_rotm = euler2rotm(base_rpy)
+                    for arm_i in range(self.num_arms):
+                        state_offset = arm_i * 6
+                        base_xyz[arm_i] = arm_states[k, state_offset : state_offset + 3]
+                        base_rotm[arm_i] = euler2rotm(arm_states[k, state_offset + 3 : state_offset + 6])
         else:
             for k in range(1, self.sequence_length):
-                prev_xyz = arm_states[k - 1, 0:3]
-                prev_rpy = arm_states[k - 1, 3:6]
-                prev_rotm = euler2rotm(prev_rpy)
-                curr_xyz = arm_states[k, 0:3]
-                curr_rpy = arm_states[k, 3:6]
-                curr_gripper = gripper_states[k]
-                curr_rotm = euler2rotm(curr_rpy)
-                rel_xyz = np.dot(prev_rotm.T, curr_xyz - prev_xyz)
-                rel_rotm = prev_rotm.T @ curr_rotm
-                rel_rpy = rotm2euler(rel_rotm)
-                action[k - 1, 0:3] = rel_xyz
-                action[k - 1, 3:6] = rel_rpy
-                action[k - 1, 6] = curr_gripper
+                for arm_i in range(self.num_arms):
+                    state_offset = arm_i * 6
+                    action_offset = arm_i * 7
+                    prev_xyz = arm_states[k - 1, state_offset : state_offset + 3]
+                    prev_rpy = arm_states[k - 1, state_offset + 3 : state_offset + 6]
+                    prev_rotm = euler2rotm(prev_rpy)
+                    curr_xyz = arm_states[k, state_offset : state_offset + 3]
+                    curr_rpy = arm_states[k, state_offset + 3 : state_offset + 6]
+                    curr_gripper = gripper_states[k, arm_i]
+                    curr_rotm = euler2rotm(curr_rpy)
+                    rel_xyz = np.dot(prev_rotm.T, curr_xyz - prev_xyz)
+                    rel_rotm = prev_rotm.T @ curr_rotm
+                    rel_rpy = rotm2euler(rel_rotm)
+                    action[k - 1, action_offset : action_offset + 3] = rel_xyz
+                    action[k - 1, action_offset + 3 : action_offset + 6] = rel_rpy
+                    action[k - 1, action_offset + 6] = curr_gripper
         return torch.from_numpy(action)  # (l - 1, act_dim)
 
     def __getitem__(self, index, cam_id=None, return_video=False):
