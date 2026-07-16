@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
 """Convert RoboTwin HDF5 episodes to Cosmos action-conditioned JSON annotations.
 
-The Cosmos action-conditioned training dataset reads:
-  output_root/
-    annotation/train/*.json
-    annotation/val/*.json
-    videos/<task>/<episode>.mp4
-
 Each JSON contains one episode with a video path plus bimanual end-effector
-state and gripper arrays. The state is ordered as:
-  [left_xyz, left_rpy, right_xyz, right_rpy]
+
 and actions are ordered as:
   [left_delta_xyz, left_delta_rpy, left_gripper,
    right_delta_xyz, right_delta_rpy, right_gripper]
@@ -73,30 +66,10 @@ def rotm_to_euler(rotm: np.ndarray) -> np.ndarray:
     return np.array([roll, pitch, yaw], dtype=np.float64)
 
 
-def arm_motion_score(endpose: np.ndarray, gripper: np.ndarray) -> float:
-    """Estimate which arm is active from motion in pose and gripper state."""
-    if len(endpose) < 2:
-        return 0.0
-    translation = np.linalg.norm(np.diff(endpose[:, :3], axis=0), axis=1).sum()
-    rotation = np.linalg.norm(np.diff(endpose[:, 3:7], axis=0), axis=1).sum()
-    gripper_motion = np.abs(np.diff(gripper)).sum()
-    return float(translation + 0.25 * rotation + 0.01 * gripper_motion)
-
-
-def get_arm_motion_scores(f: h5py.File) -> dict[str, float]:
-    scores = {}
-    for arm in ["left", "right"]:
-        endpose = np.asarray(f[f"endpose/{arm}_endpose"], dtype=np.float64)
-        gripper = np.asarray(f[f"endpose/{arm}_gripper"], dtype=np.float64)
-        scores[arm] = arm_motion_score(endpose, gripper)
-    return scores
-
-
-def read_episode(h5_path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+def read_episode(h5_path: Path) -> tuple[np.ndarray, np.ndarray]:
     states = []
     grippers = []
     with h5py.File(h5_path, "r") as f:
-        arm_scores = get_arm_motion_scores(f)
         for arm in ["left", "right"]:
             endpose = np.asarray(f[f"endpose/{arm}_endpose"], dtype=np.float64)
             gripper = np.asarray(f[f"endpose/{arm}_gripper"], dtype=np.float64)
@@ -113,15 +86,14 @@ def read_episode(h5_path: Path) -> tuple[np.ndarray, np.ndarray, dict[str, float
             states.append(np.concatenate([xyz, rpy], axis=-1))
             grippers.append(gripper)
 
-    return np.concatenate(states, axis=-1), np.stack(grippers, axis=-1), arm_scores
+    return np.concatenate(states, axis=-1), np.stack(grippers, axis=-1)
 
 
 def compute_relative_actions(state: np.ndarray, gripper: np.ndarray) -> np.ndarray:
     """Store unscaled relative bimanual actions; Dataset_3D recomputes this during training."""
-    num_arms = state.shape[1] // 6
-    action = np.zeros((len(state) - 1, num_arms * 7), dtype=np.float64)
+    action = np.zeros((len(state) - 1, 14), dtype=np.float64)
     for k in range(1, len(state)):
-        for arm_i in range(num_arms):
+        for arm_i in range(2):
             state_offset = arm_i * 6
             action_offset = arm_i * 7
             prev_xyz = state[k - 1, state_offset : state_offset + 3]
@@ -136,18 +108,6 @@ def compute_relative_actions(state: np.ndarray, gripper: np.ndarray) -> np.ndarr
     return action
 
 
-def link_or_copy(src: Path, dst: Path, mode: str) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists() or dst.is_symlink():
-        return
-    if mode == "symlink":
-        os.symlink(src.resolve(), dst)
-    elif mode == "copy":
-        shutil.copy2(src, dst)
-    else:
-        raise ValueError(f"Unsupported video mode: {mode}")
-
-
 def episode_index(path: Path) -> int:
     stem = path.stem
     if stem.startswith("episode"):
@@ -157,10 +117,9 @@ def episode_index(path: Path) -> int:
 
 def collect_episodes(source_root: Path) -> list[tuple[str, Path, Path]]:
     episodes = []
-    if (source_root / "dataset").is_dir():
-        h5_paths = source_root.glob("dataset/*/*/data/episode*.hdf5")
-    else:
-        h5_paths = source_root.glob("*/*/data/episode*.hdf5")
+    if not source_root.is_dir():
+        raise RuntimeError(f"source_root does not exist or is not a directory: {source_root}")
+    h5_paths = source_root.glob("*/*/data/episode*.hdf5")
 
     def sort_key(path: Path) -> tuple[str, str, int]:
         run_dir = path.parent.parent
@@ -173,13 +132,6 @@ def collect_episodes(source_root: Path) -> list[tuple[str, Path, Path]]:
         if video_path.exists():
             episodes.append((task, h5_path, video_path))
     return episodes
-
-
-def split_name(i: int, val_ratio: float) -> str:
-    if val_ratio <= 0:
-        return "train"
-    period = max(int(round(1.0 / val_ratio)), 1)
-    return "val" if i % period == 0 else "train"
 
 
 def convert(args: argparse.Namespace) -> None:
@@ -195,21 +147,23 @@ def convert(args: argparse.Namespace) -> None:
     skipped = 0
     for global_i, (task, h5_path, video_src) in enumerate(episodes):
         try:
-            state, gripper, arm_scores = read_episode(h5_path)
+            state, gripper = read_episode(h5_path)
         except Exception as exc:
             skipped += 1
             print(f"[skip] {h5_path}: {exc}")
             continue
-
-        split = split_name(global_i, args.val_ratio)
+            
         episode_name = h5_path.stem
-        rel_video = Path("videos") / task / f"{episode_name}.mp4"
+        is_eval = global_i % 50 in range(40, 50)
+        split = "val" if is_eval else "train"
+        rel_video = output_root / split / "videos" / f"{task}_{episode_name}.mp4"
         video_dst = output_root / rel_video
-        ann_name = f"{task}_{episode_name}.json"
-        ann_path = output_root / "annotation" / split / ann_name
+        ann_path = output_root / split / "annotation" / f"{task}_{episode_name}.json"
 
+        video_dst.parent.mkdir(parents=True, exist_ok=True)
+        if not video_dst.exists() and not video_dst.is_symlink():
+            os.symlink(video_src.resolve(), video_dst)
 
-        link_or_copy(video_src, video_dst, args.video_mode)
         ann_path.parent.mkdir(parents=True, exist_ok=True)
         action = compute_relative_actions(state, gripper)
         payload = {
@@ -226,18 +180,13 @@ def convert(args: argparse.Namespace) -> None:
                 "task": task,
                 "source_hdf5": str(h5_path),
                 "source_video": str(video_src),
-                "arms": ["left", "right"],
-                "arm_motion_scores": arm_scores,
-                "state_format": ["left_xyzrpy", "right_xyzrpy"],
                 "action_format": ["left_delta_xyzrpy_gripper", "right_delta_xyzrpy_gripper"],
                 "action_dim": 14,
-                "quat_order": "wxyz",
-                "is_eval": split == "val",
+                "is_eval": is_eval,
             },
         }
         with ann_path.open("w") as f:
-            json.dump(payload, f)
-
+            json.dump(payload, f, indent=4)
         counts[split] += 1
 
     print(f"source_root: {source_root}")
@@ -251,17 +200,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-root",
         type=Path,
-        default=Path("as_baseline/RoboTwin2.0_480_640"),
+        default=Path("/data1/sunyang/datasets/RoboTwin2.0_480_640/dataset"),
         help="RoboTwin root containing dataset/<task>/<run>/{data,video}.",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
         required=True,
-        help="Destination root for Cosmos-style annotation/ and videos/ directories.",
+        help="Destination root for Cosmos-style annotations/ and videos/ directories.",
     )
-    parser.add_argument("--val-ratio", type=float, default=0.05, help="Deterministic validation ratio.")
-    parser.add_argument("--video-mode", choices=["symlink", "copy"], default="symlink")
     parser.add_argument("--max-episodes", type=int, default=None, help="Limit conversion for smoke tests.")
     return parser.parse_args()
 

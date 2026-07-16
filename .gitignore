@@ -207,8 +207,7 @@ cython_debug/
 !assets/**/*.mp4
 
 as_baseline/*
-!as_baseline/dataloader.py
-
+!as_baseline/scripts/
 AGENTS.md
 
 .vscode
