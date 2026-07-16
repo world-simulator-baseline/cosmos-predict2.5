@@ -208,6 +208,7 @@ cython_debug/
 
 as_baseline/*
 !as_baseline/scripts/
+!as_baseline/experiment/
 AGENTS.md
 
 .vscode
