@@ -192,11 +192,29 @@ StateDictItemPath = namedtuple("StateDictItemPath", ["state_dict", "save_path"])
 # to people who find it difficult to digest the code, official tutorial for torch dcp may be helpful
 
 
+_DCP_GLOO_PROCESS_GROUP = None
+
+
+def _get_dcp_process_group():
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return None
+    if torch.distributed.get_world_size() <= 1:
+        return None
+
+    global _DCP_GLOO_PROCESS_GROUP
+    if _DCP_GLOO_PROCESS_GROUP is None:
+        ranks = list(range(torch.distributed.get_world_size()))
+        _DCP_GLOO_PROCESS_GROUP = torch.distributed.new_group(ranks=ranks, backend="gloo")
+        log.info("Created gloo process group for torch.distributed.checkpoint load planning.")
+    return _DCP_GLOO_PROCESS_GROUP
+
+
 def dcp_load_state_dict(_state_dict, storage_reader, load_planner):
     dcp.load(
         _state_dict,
         storage_reader=storage_reader,
         planner=load_planner,
+        process_group=_get_dcp_process_group(),
     )
     # Check for missing and unexpected keys by comparing with checkpoint metadata
     missing_keys = []
@@ -558,6 +576,7 @@ class DistributedCheckpointer(AbstractCheckpointer):
                         _state_dict,
                         storage_reader=storage_reader,
                         planner=load_planner,
+                        process_group=_get_dcp_process_group(),
                     )
                     _optim_wrapper.load_state_dict(_state_dict)
                 elif key == "scheduler":
@@ -567,6 +586,7 @@ class DistributedCheckpointer(AbstractCheckpointer):
                         _state_dict,
                         storage_reader=storage_reader,
                         planner=load_planner,
+                        process_group=_get_dcp_process_group(),
                     )
                     scheduler.load_state_dict(_state_dict)
                 elif key == "trainer":
@@ -579,6 +599,7 @@ class DistributedCheckpointer(AbstractCheckpointer):
                         _state_dict,
                         storage_reader=storage_reader,
                         planner=load_planner,
+                        process_group=_get_dcp_process_group(),
                     )
                     grad_scaler.load_state_dict(_state_dict["grad_scaler"])
                     iteration = _state_dict["iteration"]
@@ -680,6 +701,7 @@ class DistributedCheckpointer(AbstractCheckpointer):
                 v,
                 storage_writer=storage_writer,
                 planner=DefaultSavePlanner(dedup_save_to_lowest_rank=True),
+                process_group=_get_dcp_process_group(),
             )
 
         if distributed.is_rank0():
