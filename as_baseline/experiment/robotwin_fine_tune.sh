@@ -19,3 +19,5 @@ NCCL_SHM_DISABLE=1 .venv/bin/torchrun --nproc_per_node=2 --master_port=12341 -m 
   trainer.callbacks.wandb.save_s3=False \
   trainer.callbacks.wandb_10x.save_s3=False \
   ~dataloader_train.dataloaders
+
+# CUDA_LAUNCH_BLOCKING=1 bash as_baseline/experiment/robotwin_fine_tune.sh
