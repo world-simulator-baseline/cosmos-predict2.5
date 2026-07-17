@@ -2,8 +2,9 @@ NCCL_SHM_DISABLE=1 .venv/bin/torchrun --nproc_per_node=2 --master_port=12341 -m 
   --config=cosmos_predict2/_src/predict2/action/configs/action_conditioned/config.py \
   -- \
   experiment=robotwin_14d_finetune \
-  job.name=robotwin_14d_finetune_pretrained_2gpu_smoke \
-  trainer.max_iter=20 \
+  job.name=robotwin_14d_finetune_pretrained_2gpu \
+  trainer.max_iter=10000 \
+  checkpoint.save_iter=500 \
   trainer.straggler_detection.enabled=False \
   model.config.fsdp_shard_size=2 \
   model.config.ema.enabled=False \
