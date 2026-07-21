@@ -200,7 +200,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--source-root",
         type=Path,
-        default=Path("/data1/sunyang/datasets/RoboTwin2.0_640_480/dataset"),
+        default=Path("/data1/common_data/RoboTwin2.0_640_480/dataset"),
         help="RoboTwin root containing dataset/<task>/<run>/{data,video}.",
     )
     parser.add_argument(
