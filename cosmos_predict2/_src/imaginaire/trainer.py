@@ -53,6 +53,8 @@ class ImaginaireTrainer:
         training_timer (misc.Timer): Timer object to time code blocks and functions.
     """
 
+    _GRACEFUL_STOP_SIGNALS = (signal.SIGUSR1, signal.SIGTERM, signal.SIGINT)
+
     def __init__(self, config):
         """Constructor of the trainer.
 
@@ -147,6 +149,46 @@ class ImaginaireTrainer:
         self.straggler_detector.initialize()
         # Send a TimeoutError if a training step takes over timeout_period seconds.
         signal.signal(signal.SIGALRM, functools.partial(misc.timeout_handler, config.trainer.timeout_period))  # type: ignore
+        self._graceful_stop_requested = False
+        self._graceful_stop_signal: int | None = None
+        self._graceful_stop_announced = False
+        for stop_signal in self._GRACEFUL_STOP_SIGNALS:
+            signal.signal(stop_signal, self._request_graceful_checkpoint_stop)
+        log.info(
+            f"Graceful checkpoint stop enabled for this worker. "
+            f"Recommended manual command: kill -USR1 {os.getpid()}"
+        )
+
+    def _request_graceful_checkpoint_stop(self, signum: int, _frame) -> None:
+        """Record a stop request without doing CUDA, collectives, logging, or I/O in the signal handler."""
+        self._graceful_stop_requested = True
+        self._graceful_stop_signal = signum
+
+    def _sync_graceful_checkpoint_stop(self) -> bool:
+        """Synchronize a local signal request across all ranks at an optimizer-step boundary."""
+        requested = self._graceful_stop_requested
+        if dist.is_available() and dist.is_initialized():
+            backend = dist.get_backend()
+            device = torch.cuda.current_device() if backend == "nccl" else torch.device("cpu")
+            requested_tensor = torch.tensor(int(requested), dtype=torch.int32, device=device)
+            dist.all_reduce(requested_tensor, op=dist.ReduceOp.MAX)
+            requested = bool(requested_tensor.item())
+
+        if requested:
+            self._graceful_stop_requested = True
+            if not self._graceful_stop_announced:
+                local_signal = (
+                    signal.Signals(self._graceful_stop_signal).name
+                    if self._graceful_stop_signal is not None
+                    else "a signal on another rank"
+                )
+                log.warning(
+                    f"Graceful checkpoint stop requested by {local_signal}. "
+                    "Stopping after the completed optimizer update and saving a checkpoint.",
+                    rank0_only=False,
+                )
+                self._graceful_stop_announced = True
+        return requested
 
     def _fetch_and_broadcast_data(
         self,
@@ -299,9 +341,13 @@ class ImaginaireTrainer:
                         continue
                     # Do the following when an actual optimizer (update) step has been made.
                     iteration += 1
+                    graceful_checkpoint_stop = self._sync_graceful_checkpoint_stop()
                     # Save checkpoint.
                     if iteration % self.config.checkpoint.save_iter == 0:
                         self.checkpointer.save(model, optimizer, scheduler, grad_scaler, iteration=iteration)
+                    if graceful_checkpoint_stop:
+                        _end_training = True
+                        break
                     self.callbacks.on_training_step_end(model, data_batch, output_batch, loss, iteration=iteration)
                     # Validation.
                     if self.config.trainer.run_validation and iteration % self.config.trainer.validation_iter == 0:

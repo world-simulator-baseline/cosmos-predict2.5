@@ -312,6 +312,7 @@ def inference(
         for i in range(inference_args.start_frame_idx, len(actions), inference_args.chunk_size):
             # Handle incomplete chunks
             actions_chunk = actions[i : i + inference_args.chunk_size]
+            valid_action_count = actions_chunk.shape[0]
             if actions_chunk.shape[0] != inference_args.chunk_size:
                 pad_len = inference_args.chunk_size - actions_chunk.shape[0]
                 if pad_len > 0:
@@ -350,7 +351,10 @@ def inference(
             video_clamped = (
                 (torch.clamp(video_normalized[0], 0, 1) * 255).to(torch.uint8).permute(1, 2, 3, 0).cpu().numpy()
             )
-            next_img_array = video_clamped[-1]  # Last frame is the next frame
+            # Do not emit or feed back frames generated from the zero padding in
+            # an incomplete final action chunk.
+            video_clamped = video_clamped[: valid_action_count + 1]
+            next_img_array = video_clamped[-1]  # Last real generated frame is the next input
             frames.append(next_img_array)
             img_array = next_img_array
             chunk_video.append(video_clamped)
@@ -358,9 +362,10 @@ def inference(
             if inference_args.single_chunk:
                 break
 
-        chunk_list = [chunk_video[0]] + [
-            chunk_video[i][: inference_args.chunk_size] for i in range(1, len(chunk_video))
-        ]
+        # Every later chunk starts with the final frame of the preceding chunk,
+        # because it is used as the next conditioning image.  Drop that overlap
+        # instead of duplicating it and discarding the last generated frame.
+        chunk_list = [chunk_video[0]] + [chunk_video[i][1:] for i in range(1, len(chunk_video))]
         chunk_video = np.concatenate(chunk_list, axis=0)
         if inference_args.single_chunk:
             chunk_video_name = str(inference_args.save_root / f"{img_name}_single_chunk.mp4")

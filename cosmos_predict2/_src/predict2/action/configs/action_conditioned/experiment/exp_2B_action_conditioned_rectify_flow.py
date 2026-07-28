@@ -656,6 +656,9 @@ AC_CHUNK_MULTI_VIEW_REASON_EMBEDDINGS_RECTIFIED_FLOW_2B_BRIDGE_13FRAME_256X320 =
     flags={"allow_objects": True},
 )
 
+dataset = "/data1/fangxuebin/cosmos-predict2.5/as_baseline/converted_dataset3"
+robotwin_fine_tune_video_size = [480, 640]
+
 ROBOTWIN_14D_FINETUNE = LazyDict(
     dict(
         defaults=[
@@ -678,6 +681,10 @@ ROBOTWIN_14D_FINETUNE = LazyDict(
                 ),
             ),
         ),
+        optimizer=dict(
+            lr=5e-5, 
+            weight_decay=0.1,
+        ),
         checkpoint=dict(
             strict_resume=False,
             keys_to_skip_loading=[
@@ -686,57 +693,58 @@ ROBOTWIN_14D_FINETUNE = LazyDict(
             ],
         ),
         dataloader_train=dict(
-            batch_size=1,
+            batch_size=2,
             dataset=dict(
-                train_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                val_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                test_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                video_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset/train/videos",
+                train_annotation_path=dataset + "/train/annotation",
+                val_annotation_path=dataset + "/train/annotation",
+                test_annotation_path=dataset + "/train/annotation",
+                video_path=dataset + "/train/videos",
                 gripper_rescale_factor=1,
-                num_action_per_chunk=12,
+                num_action_per_chunk=80,
                 fps_downsample_ratio=1,
-                video_size=[256, 320],
+                video_size=robotwin_fine_tune_video_size,
             ),
             sampler=dict(
                 dataset=dict(
-                    train_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                    val_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                    test_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/train/annotation",
-                    video_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/videos",
+                    train_annotation_path=dataset + "/train/annotation",
+                    val_annotation_path=dataset + "/train/annotation",
+                    test_annotation_path=dataset + "/train/annotation",
+                    video_path=dataset + "/train/videos",
                     gripper_rescale_factor=1,
-                    num_action_per_chunk=12,
+                    num_action_per_chunk=80,
                     fps_downsample_ratio=1,
-                    video_size=[256, 320],
+                    video_size=robotwin_fine_tune_video_size,
                 ),
             ),
         ),
         dataloader_val=dict(
             dataset=dict(
-                train_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                val_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                test_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                video_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/videos",
+                train_annotation_path=dataset + "/val/annotation",
+                val_annotation_path=dataset + "/val/annotation",
+                test_annotation_path=dataset + "/val/annotation",
+                video_path=dataset + "/val/videos",
                 gripper_rescale_factor=1,
-                num_action_per_chunk=12,
+                num_action_per_chunk=80,
                 fps_downsample_ratio=1,
-                video_size=[256, 320],
+                video_size=robotwin_fine_tune_video_size,
             ),
             sampler=dict(
                 dataset=dict(
-                    train_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                    val_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                    test_annotation_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset1/val/annotation",
-                    video_path="/data1/fangxuebin/dev/wm/world_simulator_baseline/third_party/Cosmos-Predict2.5/as_baseline/converted_dataset/val/videos",
+                    train_annotation_path=dataset + "/val/annotation",
+                    val_annotation_path=dataset + "/val/annotation",
+                    test_annotation_path=dataset + "/val/annotation",
+                    video_path=dataset + "/val/videos",
                     gripper_rescale_factor=1,
-                    num_action_per_chunk=12,
+                    num_action_per_chunk=80,
                     fps_downsample_ratio=1,
-                    video_size=[256, 320],
+                    video_size=robotwin_fine_tune_video_size,
                 ),
             ),
         ),
     ),
     flags={"allow_objects": True},
 )
+
 
 cs = ConfigStore.instance()
 
