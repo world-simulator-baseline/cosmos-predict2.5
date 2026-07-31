@@ -656,7 +656,7 @@ AC_CHUNK_MULTI_VIEW_REASON_EMBEDDINGS_RECTIFIED_FLOW_2B_BRIDGE_13FRAME_256X320 =
     flags={"allow_objects": True},
 )
 
-dataset = "/data1/fangxuebin/cosmos-predict2.5/as_baseline/converted_dataset3"
+dataset = "/data1/fangxuebin/cosmos-predict2.5/as_baseline/converted_dataset4"
 robotwin_fine_tune_video_size = [480, 640]
 
 ROBOTWIN_14D_FINETUNE = LazyDict(
@@ -674,7 +674,7 @@ ROBOTWIN_14D_FINETUNE = LazyDict(
         ),
         model=dict(
             config=dict(
-                state_t=1 + 12 // 4,
+                state_t=1 + 80 // 4,
                 net=dict(
                     action_dim=14,
                     temporal_compression_ratio=4,
@@ -693,7 +693,7 @@ ROBOTWIN_14D_FINETUNE = LazyDict(
             ],
         ),
         dataloader_train=dict(
-            batch_size=2,
+            batch_size=4,
             dataset=dict(
                 train_annotation_path=dataset + "/train/annotation",
                 val_annotation_path=dataset + "/train/annotation",
